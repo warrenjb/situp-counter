@@ -6,56 +6,72 @@
 //
 // How it works:
 //   - Low-pass filters the accelerometer to get the gravity direction.
-//   - On calibrate, stores the "lying flat" gravity direction as reference.
-//   - Torso angle = angle between current gravity and the reference.
-//     This works no matter which way the board is mounted on the strap.
+//   - Calibrate stores the "lying flat" gravity direction as zero.
+//   - Torso angle = angle between current gravity and that reference,
+//     so it works no matter which way the board is mounted on the strap.
 //   - State machine: DOWN -> RISING -> UP -> back DOWN = 1 rep.
-//     Rising past PARTIAL_DEG but dropping back before UP_DEG = partial rep.
-//
-// Reps are only counted during a set (between Start and Stop).
+//     Rising past the partial threshold but not reaching "up" = partial rep.
+//   - Reps only count during a set (between Start and Stop).
+//   - Thresholds are adjustable over BLE and saved in flash.
 //
 // Commands (USB serial or BLE UART):
 //   g = start set (lie flat first: recalibrates, resets counts, starts counting)
 //   x = stop set
-//   c = calibrate only, r = reset counts, p = toggle plotter output, s = status
+//   c = calibrate only     r = reset counts     s = status + thresholds
+//   a = stream live angle (10/s)   z = stop angle stream
+//   p = toggle Serial Plotter output
+//   T,<up>,<down>,<partial>  then newline = set and save thresholds (degrees)
 //
-// BLE: advertises as "SitupCounter" using the Nordic UART service.
-// Messages:
-//   STARTED
-//   REP,<count>,<ms since last rep>
-//   PARTIAL,<count>
-//   STOPPED,<reps>,<partials>,<set ms>
+// Messages out:
+//   STARTED | REP,<n>,<ms since last> | PARTIAL,<n> | STOPPED,<reps>,<partials>,<ms>
 //   STATUS,<reps>,<partials>,<angle>,<armed 0/1>,<set ms so far>
-//   CALIBRATED, RESET
+//   CFG,<up>,<down>,<partial> | ANG,<angle> | CALIBRATED | RESET | SAVED | ERR,<why>
 
 #include <bluefruit.h>
+#include <Adafruit_LittleFS.h>
+#include <InternalFileSystem.h>
 #include <LSM6DS3.h>
 #include <Wire.h>
 
-// ---------- Tuning ----------
-const float UP_DEG      = 55.0;  // torso angle that counts as "up"
-const float DOWN_DEG    = 20.0;  // must return below this to finish a rep
-const float START_DEG   = 25.0;  // leaving DOWN starts a rep attempt
-const float PARTIAL_DEG = 35.0;  // reached this but not UP_DEG = partial
-const float ALPHA       = 0.15;  // low-pass factor at 50 Hz (lower = smoother)
-const uint32_t SAMPLE_MS  = 20;  // 50 Hz
-const uint32_t MIN_REP_MS = 600; // ignore reps faster than this
+using namespace Adafruit_LittleFS_Namespace;
+
+// ---------- Thresholds (saved in flash) ----------
+struct Config {
+  uint32_t magic;
+  float upDeg;       // torso angle that counts as "up"
+  float downDeg;     // must return below this to finish a rep
+  float partialDeg;  // reached this but not "up" = partial rep
+};
+const uint32_t CFG_MAGIC = 0x53555031;   // version tag
+Config cfg = { CFG_MAGIC, 55.0, 20.0, 35.0 };
+const char *CFG_PATH = "/situp_cfg.bin";
+const float START_GAP = 5.0;             // rep attempt starts at downDeg + this
+
+// ---------- Fixed tuning ----------
+const float ALPHA = 0.15;                // low-pass factor at 50 Hz
+const uint32_t SAMPLE_MS  = 20;          // 50 Hz
+const uint32_t MIN_REP_MS = 600;         // ignore reps faster than this
 
 LSM6DS3 imu(I2C_MODE, 0x6A);
 BLEUart bleuart;
 
-float gx = 0, gy = 0, gz = 1;     // filtered gravity vector (g)
-float rx = 0, ry = 0, rz = 1;     // reference "lying flat" unit vector
+float gx = 0, gy = 0, gz = 1;            // filtered gravity vector (g)
+float rx = 0, ry = 0, rz = 1;            // reference "lying flat" unit vector
 
 enum State { ST_DOWN, ST_RISING, ST_UP };
 State state = ST_DOWN;
 float peakDeg = 0;
 uint32_t reps = 0, partials = 0, lastRepMs = 0;
 bool plotMode = true;
-bool armed = false;               // true only during a set
+bool armed = false;                      // true only during a set
 uint32_t setStartMs = 0;
+bool streamAngle = false;
+uint8_t streamDiv = 0;
 
 uint32_t lastSampleMs = 0, ledOffAt = 0;
+
+bool capturing = false;                  // reading a "T,..." line
+String lineBuf;
 
 // ---------- LEDs (active LOW) ----------
 void ledsOff() {
@@ -73,6 +89,54 @@ void flash(int pin, uint32_t ms) {
 void send(const String &msg) {
   if (!plotMode) Serial.println(msg);
   if (Bluefruit.connected()) bleuart.println(msg);
+}
+
+void sendCfg() {
+  send("CFG," + String(cfg.upDeg, 0) + "," + String(cfg.downDeg, 0) + "," +
+       String(cfg.partialDeg, 0));
+}
+
+// ---------- Config storage ----------
+bool validCfg(float up, float down, float partial) {
+  return down >= 5 && partial >= down + 5 && up >= partial + 5 && up <= 150;
+}
+
+void loadConfig() {
+  File f(InternalFS);
+  if (f.open(CFG_PATH, FILE_O_READ)) {
+    Config tmp;
+    if (f.read(&tmp, sizeof(tmp)) == (int)sizeof(tmp) && tmp.magic == CFG_MAGIC &&
+        validCfg(tmp.upDeg, tmp.downDeg, tmp.partialDeg)) {
+      cfg = tmp;
+    }
+    f.close();
+  }
+}
+
+bool saveConfig() {
+  InternalFS.remove(CFG_PATH);
+  File f(InternalFS);
+  if (!f.open(CFG_PATH, FILE_O_WRITE)) return false;
+  f.write((const uint8_t *)&cfg, sizeof(cfg));
+  f.close();
+  return true;
+}
+
+void parseThresholds(const String &s) {   // s looks like ",60,20,40"
+  int a = s.indexOf(',');
+  int b = s.indexOf(',', a + 1);
+  int c = s.indexOf(',', b + 1);
+  if (a < 0 || b < 0 || c < 0) { send("ERR,format"); return; }
+  float up = s.substring(a + 1, b).toFloat();
+  float down = s.substring(b + 1, c).toFloat();
+  float partial = s.substring(c + 1).toFloat();
+  if (!validCfg(up, down, partial)) { send("ERR,range"); return; }
+  cfg.upDeg = up;
+  cfg.downDeg = down;
+  cfg.partialDeg = partial;
+  state = ST_DOWN;
+  send(saveConfig() ? "SAVED" : "ERR,save");
+  sendCfg();
 }
 
 // ---------- Sensor ----------
@@ -129,19 +193,19 @@ void onPartial() {
 void updateReps(float a, uint32_t now) {
   switch (state) {
     case ST_DOWN:
-      if (a > START_DEG) { state = ST_RISING; peakDeg = a; }
+      if (a > cfg.downDeg + START_GAP) { state = ST_RISING; peakDeg = a; }
       break;
     case ST_RISING:
       if (a > peakDeg) peakDeg = a;
-      if (a >= UP_DEG) {
+      if (a >= cfg.upDeg) {
         state = ST_UP;
-      } else if (a < DOWN_DEG) {
-        if (peakDeg >= PARTIAL_DEG) onPartial();
+      } else if (a < cfg.downDeg) {
+        if (peakDeg >= cfg.partialDeg) onPartial();
         state = ST_DOWN;
       }
       break;
     case ST_UP:
-      if (a < DOWN_DEG) { onRep(now); state = ST_DOWN; }
+      if (a < cfg.downDeg) { onRep(now); state = ST_DOWN; }
       break;
   }
 }
@@ -149,12 +213,6 @@ void updateReps(float a, uint32_t now) {
 // ---------- Commands ----------
 void handleCmd(char c) {
   switch (tolower(c)) {
-    case 'c': calibrate(); break;
-    case 'r':
-      reps = partials = lastRepMs = 0;
-      state = ST_DOWN;
-      send("RESET");
-      break;
     case 'g':                       // start a set
       reps = partials = lastRepMs = 0;
       calibrate();                  // you should be lying flat
@@ -169,13 +227,37 @@ void handleCmd(char c) {
       armed = false;
       flash(LED_BLUE, 400);
       break;
+    case 'c': calibrate(); break;
+    case 'r':
+      reps = partials = lastRepMs = 0;
+      state = ST_DOWN;
+      send("RESET");
+      break;
+    case 'a': streamAngle = true; break;
+    case 'z': streamAngle = false; break;
     case 'p': plotMode = !plotMode; break;
     case 's':
       send("STATUS," + String(reps) + "," + String(partials) + "," +
            String(angleDeg(), 1) + "," + String(armed ? 1 : 0) + "," +
            String(armed ? millis() - setStartMs : 0));
+      sendCfg();
       break;
   }
+}
+
+void handleChar(char c) {
+  if (capturing) {
+    if (c == '\n' || c == '\r') {
+      capturing = false;
+      parseThresholds(lineBuf);
+      lineBuf = "";
+    } else if (lineBuf.length() < 40) {
+      lineBuf += c;
+    }
+    return;
+  }
+  if (c == 'T') { capturing = true; lineBuf = ""; return; }
+  handleCmd(c);
 }
 
 // ---------- BLE ----------
@@ -203,6 +285,9 @@ void setup() {
   pinMode(LED_BLUE, OUTPUT);
   ledsOff();
 
+  InternalFS.begin();
+  loadConfig();
+
 #ifdef PIN_LSM6DS3TR_C_POWER
   pinMode(PIN_LSM6DS3TR_C_POWER, OUTPUT);   // IMU power rail
   digitalWrite(PIN_LSM6DS3TR_C_POWER, HIGH);
@@ -221,7 +306,7 @@ void setup() {
 
   startBLE();
 
-  // Seed the filter, then give 3 s to lie flat before calibrating
+  // Seed the filter, then give 3 s to lie flat before a first calibration
   gx = imu.readFloatAccelX();
   gy = imu.readFloatAccelY();
   gz = imu.readFloatAccelZ();
@@ -235,8 +320,8 @@ void setup() {
 void loop() {
   uint32_t now = millis();
 
-  while (Serial.available()) handleCmd(Serial.read());
-  while (bleuart.available()) handleCmd(bleuart.read());
+  while (Serial.available()) handleChar(Serial.read());
+  while (bleuart.available()) handleChar(bleuart.read());
 
   if (ledOffAt && now >= ledOffAt) { ledsOff(); ledOffAt = 0; }
 
@@ -246,11 +331,17 @@ void loop() {
     float a = angleDeg();
     if (armed) updateReps(a, now);
 
+    if (streamAngle && ++streamDiv >= 5) {   // 10 per second
+      streamDiv = 0;
+      send("ANG," + String(a, 1));
+    }
+
     if (plotMode) {
-      Serial.print("angle:");  Serial.print(a, 1);
-      Serial.print(",up:");    Serial.print(UP_DEG, 0);
-      Serial.print(",down:");  Serial.print(DOWN_DEG, 0);
-      Serial.print(",reps:");  Serial.println(reps);
+      Serial.print("angle:");    Serial.print(a, 1);
+      Serial.print(",up:");      Serial.print(cfg.upDeg, 0);
+      Serial.print(",partial:"); Serial.print(cfg.partialDeg, 0);
+      Serial.print(",down:");    Serial.print(cfg.downDeg, 0);
+      Serial.print(",reps:");    Serial.println(reps);
     }
   }
 }

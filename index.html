@@ -7,12 +7,14 @@
 <style>
   :root {
     --bg: #f6f7f9; --card: #ffffff; --text: #16181d; --muted: #6b7280;
-    --accent: #16a34a; --warn: #dc2626; --line: #e5e7eb; --btn: #111827; --btn-text: #fff;
+    --accent: #16a34a; --warn: #dc2626; --mid: #d97706; --line: #e5e7eb;
+    --track: #eef0f3;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #0f1115; --card: #181b22; --text: #f3f4f6; --muted: #9ca3af;
-      --accent: #22c55e; --warn: #f87171; --line: #2a2f3a; --btn: #f3f4f6; --btn-text: #111827;
+      --accent: #22c55e; --warn: #f87171; --mid: #fbbf24; --line: #2a2f3a;
+      --track: #232833;
     }
   }
   * { box-sizing: border-box; }
@@ -45,22 +47,48 @@
     flex: 1; min-width: 90px; padding: 14px 10px; font-size: 1rem; font-weight: 600;
     border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: var(--text);
   }
-  #startBtn { padding: 20px 10px; font-size: 1.3rem; background: var(--accent); color: #fff; border-color: var(--accent); }
+  #startBtn { width: 100%; padding: 20px 10px; font-size: 1.3rem; background: var(--accent); color: #fff; border-color: var(--accent); }
   #startBtn.stop { background: var(--warn); border-color: var(--warn); }
+  button.solid { background: var(--text); color: var(--bg); border-color: var(--text); }
   button:disabled { opacity: .4; }
   label.toggle { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: .9rem; margin-top: 12px; }
   #sets { list-style: none; margin: 0; padding: 0; }
-  #sets li { display: flex; justify-content: space-between; padding: 8px 0; border-top: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+  #sets li { display: flex; justify-content: space-between; gap: 8px; padding: 8px 0; border-top: 1px solid var(--line); font-variant-numeric: tabular-nums; }
   #sets li:first-child { border-top: 0; }
   #sets .n { font-weight: 700; }
-  #sets .d { color: var(--muted); font-size: .9rem; }
+  #sets .d { color: var(--muted); font-size: .9rem; white-space: nowrap; }
   #setsCard { display: none; }
-  details summary { color: var(--muted); font-size: .85rem; cursor: pointer; }
+  details > summary { cursor: pointer; font-weight: 600; list-style: none; display: flex; justify-content: space-between; }
+  details > summary::after { content: "▾"; color: var(--muted); }
+  details[open] > summary::after { content: "▴"; }
+  details.small > summary { font-weight: 400; color: var(--muted); font-size: .85rem; }
   #log {
     font-family: ui-monospace, monospace; font-size: .75rem; color: var(--muted);
     max-height: 140px; overflow-y: auto; white-space: pre-wrap; margin: 8px 0 0;
   }
   #unsupported { display: none; color: var(--warn); }
+
+  /* Tune panel */
+  .tune-body { margin-top: 14px; }
+  .angle-read { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; }
+  #angleNow { font-size: 2rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .hint { color: var(--muted); font-size: .85rem; }
+  .gauge { position: relative; height: 28px; background: var(--track); border-radius: 8px; overflow: hidden; }
+  #gaugeFill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--accent); opacity: .35; transition: width .1s linear; }
+  .mark { position: absolute; top: 0; bottom: 0; width: 3px; margin-left: -1px; }
+  #mUp { background: var(--accent); }
+  #mPartial { background: var(--mid); }
+  #mDown { background: var(--muted); }
+  #mPeak { background: var(--text); width: 2px; opacity: .5; display: none; }
+  .scale { display: flex; justify-content: space-between; color: var(--muted); font-size: .7rem; margin-top: 4px; }
+  .slider { margin-top: 14px; }
+  .slider .top { display: flex; justify-content: space-between; font-size: .9rem; }
+  .slider .top b { font-variant-numeric: tabular-nums; }
+  .slider input { width: 100%; margin-top: 6px; }
+  .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+  #tuneMsg { margin-top: 12px; font-size: .9rem; min-height: 1.3em; }
+  #tuneMsg.ok { color: var(--accent); }
+  #tuneMsg.bad { color: var(--warn); }
 </style>
 </head>
 <body>
@@ -97,19 +125,65 @@
 </div>
 
 <div class="card">
-  <details><summary>Device log</summary><pre id="log"></pre></details>
+  <details id="tune">
+    <summary>Tune rep detection</summary>
+    <div class="tune-body">
+      <div class="angle-read">
+        <span id="angleNow">–</span>
+        <span class="hint" id="angleHint">Live torso angle</span>
+      </div>
+      <div class="gauge">
+        <div id="gaugeFill"></div>
+        <div class="mark" id="mDown"></div>
+        <div class="mark" id="mPartial"></div>
+        <div class="mark" id="mUp"></div>
+        <div class="mark" id="mPeak"></div>
+      </div>
+      <div class="scale"><span>0°</span><span>30°</span><span>60°</span><span>90°</span><span>120°</span></div>
+
+      <div class="row" style="margin-top:14px">
+        <button id="autoBtn" class="solid">Auto-tune</button>
+        <button id="doneBtn" style="display:none">Finish now</button>
+      </div>
+
+      <div class="slider">
+        <div class="top"><span><span class="sw" style="background:var(--accent)"></span>Up (counts the rep)</span><b id="upV">55°</b></div>
+        <input type="range" id="upR" min="20" max="120" step="1" value="55">
+      </div>
+      <div class="slider">
+        <div class="top"><span><span class="sw" style="background:var(--mid)"></span>Partial rep</span><b id="partialV">35°</b></div>
+        <input type="range" id="partialR" min="10" max="110" step="1" value="35">
+      </div>
+      <div class="slider">
+        <div class="top"><span><span class="sw" style="background:var(--muted)"></span>Down (finishes the rep)</span><b id="downV">20°</b></div>
+        <input type="range" id="downR" min="5" max="60" step="1" value="20">
+      </div>
+
+      <div class="row" style="margin-top:14px">
+        <button id="saveBtn" class="solid" disabled>Save to board</button>
+      </div>
+      <div id="tuneMsg"></div>
+    </div>
+  </details>
+</div>
+
+<div class="card">
+  <details class="small"><summary>Device log</summary><pre id="log"></pre></details>
 </div>
 
 <script>
 const NUS = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 const NUS_RX = '6e400002-b5a3-f393-e0a9-e50e24dcca9e'; // phone -> board
 const NUS_TX = '6e400003-b5a3-f393-e0a9-e50e24dcca9e'; // board -> phone
+const GAUGE_MAX = 120;
 
 const $ = id => document.getElementById(id);
 let device, rxChar, buffer = '';
 let running = false, starting = false, startTimeout = null;
 let reps = 0, partials = 0, setStart = null, repTimes = [];
 const completedSets = [];
+let boardCfg = null;          // thresholds currently saved on the board
+let tuning = null;            // auto-tune state
 
 if (!navigator.bluetooth) $('unsupported').style.display = 'block';
 
@@ -128,13 +202,17 @@ function setPhase(text, go = false) {
 
 function refreshButtons() {
   const btn = $('startBtn');
-  btn.disabled = !connected() || starting;
+  btn.disabled = !connected() || starting || !!tuning;
   btn.textContent = starting ? 'Calibrating…' : running ? 'Stop set' : 'Start set';
   btn.classList.toggle('stop', running);
   $('connectBtn').textContent = connected() ? 'Disconnect' : 'Connect';
   $('dot').classList.toggle('on', connected());
   $('statusText').textContent = connected() ? 'Connected' : 'Disconnected';
   $('count').classList.toggle('idle', !running);
+  $('autoBtn').disabled = !connected() || running;
+  $('autoBtn').textContent = tuning ? 'Cancel' : 'Auto-tune';
+  $('doneBtn').style.display = tuning && tuning.phase === 'capturing' ? '' : 'none';
+  refreshSave();
 }
 
 function fmtTime(ms) {
@@ -183,13 +261,176 @@ function addSet(r, p, ms) {
   $('setsCard').style.display = 'block';
 }
 
+// ---------- Tune panel ----------
+const pct = deg => `${Math.max(0, Math.min(deg, GAUGE_MAX)) / GAUGE_MAX * 100}%`;
+
+function sliderVals() {
+  return { up: +$('upR').value, partial: +$('partialR').value, down: +$('downR').value };
+}
+
+function validVals(v) {
+  return v.down >= 5 && v.partial >= v.down + 5 && v.up >= v.partial + 5;
+}
+
+function drawMarks() {
+  const v = sliderVals();
+  $('upV').textContent = v.up + '°';
+  $('partialV').textContent = v.partial + '°';
+  $('downV').textContent = v.down + '°';
+  $('mUp').style.left = pct(v.up);
+  $('mPartial').style.left = pct(v.partial);
+  $('mDown').style.left = pct(v.down);
+}
+
+function setSliders(v) {
+  $('upR').value = v.up; $('partialR').value = v.partial; $('downR').value = v.down;
+  drawMarks();
+}
+
+function tuneMsg(text, kind = '') {
+  $('tuneMsg').textContent = text;
+  $('tuneMsg').className = kind;
+}
+
+function refreshSave() {
+  const v = sliderVals();
+  const changed = !boardCfg || v.up !== boardCfg.up || v.partial !== boardCfg.partial || v.down !== boardCfg.down;
+  $('saveBtn').disabled = !connected() || !changed || !validVals(v);
+}
+
+['upR', 'partialR', 'downR'].forEach(id => $(id).addEventListener('input', () => {
+  drawMarks();
+  const v = sliderVals();
+  if (!validVals(v)) tuneMsg('Keep Down < Partial < Up, at least 5° apart.', 'bad');
+  else if (boardCfg) tuneMsg('Not saved yet.');
+  refreshSave();
+}));
+
+$('saveBtn').onclick = () => {
+  const v = sliderVals();
+  if (!validVals(v)) return;
+  tuneMsg('Saving…');
+  send(`T,${v.up},${v.down},${v.partial}\n`);
+};
+
+$('tune').addEventListener('toggle', () => {
+  if (!connected()) return;
+  send($('tune').open ? 'a' : 'z');
+  if (!$('tune').open && tuning) cancelTune();
+});
+
+function onAngle(a) {
+  $('angleNow').textContent = a.toFixed(0) + '°';
+  $('gaugeFill').style.width = pct(a);
+  if (tuning && tuning.phase === 'capturing') trackTune(a);
+}
+
+// Auto-tune: calibrate, then watch a few full reps and suggest thresholds.
+const TUNE_REPS = 5, ENTER = 25, EXIT = 12;
+
+function startTune() {
+  tuning = { phase: 'calibrating', peaks: [], mins: [], inRep: false, curPeak: 0, curMin: 999 };
+  if (!$('tune').open) $('tune').open = true;  // also starts the angle stream
+  $('mPeak').style.display = 'none';
+  tuneMsg('Lie flat and hold still…');
+  send('a');
+  send('c');
+  refreshButtons();
+}
+
+function cancelTune() {
+  tuning = null;
+  $('mPeak').style.display = 'none';
+  tuneMsg('');
+  refreshButtons();
+}
+
+function trackTune(a) {
+  const t = tuning;
+  if (!t.inRep) {
+    t.curMin = Math.min(t.curMin, a);
+    if (a > ENTER) { t.inRep = true; t.curPeak = a; t.mins.push(t.curMin); }
+  } else {
+    t.curPeak = Math.max(t.curPeak, a);
+    if (a < EXIT) {
+      t.inRep = false;
+      if (t.curPeak > ENTER + 10) {
+        t.peaks.push(t.curPeak);
+        $('mPeak').style.left = pct(t.curPeak);
+        $('mPeak').style.display = 'block';
+        if (navigator.vibrate) navigator.vibrate(40);
+      }
+      t.curMin = a;
+      tuneMsg(`Captured ${t.peaks.length} of ${TUNE_REPS} full sit-ups…`);
+      if (t.peaks.length >= TUNE_REPS) finishTune();
+    }
+  }
+}
+
+const median = arr => {
+  const s = [...arr].sort((a, b) => a - b), m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+
+function finishTune() {
+  const t = tuning;
+  if (!t || t.peaks.length < 2) {
+    tuneMsg('Need at least 2 full sit-ups to suggest values.', 'bad');
+    return;
+  }
+  const top = median(t.peaks), lowestTop = Math.min(...t.peaks);
+  const rest = t.mins.length ? median(t.mins) : 0;
+  let up = Math.round(Math.min(top * 0.75, lowestTop - 5));
+  let down = Math.max(5, Math.round(rest + 12));
+  let partial = Math.round((up + down) / 2);
+  tuning = null;
+  if (up - down < 15) {
+    tuneMsg(`Your range looks small (top ≈ ${top.toFixed(0)}°). Check the board is snug on your chest and try again.`, 'bad');
+    refreshButtons();
+    return;
+  }
+  setSliders({ up, partial, down });
+  tuneMsg(`Top ≈ ${top.toFixed(0)}°, rest ≈ ${rest.toFixed(0)}°. Suggested values set. Tap Save to store them.`, 'ok');
+  refreshButtons();
+}
+
+$('autoBtn').onclick = () => tuning ? cancelTune() : startTune();
+$('doneBtn').onclick = () => finishTune();
+
 // ---------- Messages from the board ----------
 function handleLine(line) {
   line = line.trim();
   const parts = line.split(',');
   if (!parts[0]) return;
-  log(line);
+  if (parts[0] !== 'ANG') log(line);
   switch (parts[0]) {
+    case 'ANG':
+      onAngle(parseFloat(parts[1]));
+      break;
+
+    case 'CALIBRATED':
+      if (tuning && tuning.phase === 'calibrating') {
+        tuning.phase = 'capturing';
+        tuneMsg(`Now do ${TUNE_REPS} slow, full sit-ups.`);
+        speak('Go');
+        refreshButtons();
+      }
+      break;
+
+    case 'CFG':
+      boardCfg = { up: +parts[1], down: +parts[2], partial: +parts[3] };
+      if (!tuning) setSliders(boardCfg);
+      refreshSave();
+      break;
+
+    case 'SAVED':
+      tuneMsg('Saved to the board.', 'ok');
+      break;
+
+    case 'ERR':
+      tuneMsg('Board rejected that: ' + (parts[1] || 'error'), 'bad');
+      break;
+
     case 'STARTED':
       clearTimeout(startTimeout);
       starting = false; running = true;
@@ -269,21 +510,23 @@ function onNotify(e) {
   }
 }
 
-async function send(cmd) {
+// Serialize writes so commands sent back-to-back don't collide.
+let writeChain = Promise.resolve();
+function send(cmd) {
   if (!rxChar) return;
   const data = new TextEncoder().encode(cmd);
-  try {
-    if (rxChar.writeValueWithoutResponse) await rxChar.writeValueWithoutResponse(data);
-    else await rxChar.writeValue(data);
-  } catch (err) { log('Send failed: ' + err.message); }
+  const ch = rxChar;
+  writeChain = writeChain.then(async () => {
+    try {
+      if (ch.writeValueWithoutResponse) await ch.writeValueWithoutResponse(data);
+      else await ch.writeValue(data);
+    } catch (err) { log('Send failed: ' + err.message); }
+  });
 }
 
 // ---------- Start / Stop ----------
 $('startBtn').onclick = () => {
-  if (running) {
-    send('x');
-    return;
-  }
+  if (running) { send('x'); return; }
   starting = true;
   setPhase('Calibrating… hold still');
   refreshButtons();
@@ -311,6 +554,7 @@ async function connect() {
     });
     device.addEventListener('gattserverdisconnected', () => {
       rxChar = null; starting = false;
+      if (tuning) cancelTune();
       log('Disconnected');
       if (running) setPhase('Disconnected. The board is still counting; reconnect to sync.');
       else setPhase('Connect to get started');
@@ -325,7 +569,8 @@ async function connect() {
     log('Connected to ' + (device.name || 'device'));
     refreshButtons();
     keepAwake();
-    send('s'); // sync: picks up a set already in progress
+    send('s');                         // sync count, set state and thresholds
+    send($('tune').open ? 'a' : 'z');
   } catch (err) {
     log('Connect failed: ' + err.message);
   }
@@ -339,6 +584,9 @@ $('connectBtn').onclick = () => {
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && connected()) keepAwake();
 });
+
+drawMarks();
+refreshButtons();
 </script>
 </body>
 </html>
