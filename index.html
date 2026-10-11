@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sit-up Counter</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #16181d; --muted: #6b7280;
+    --accent: #16a34a; --warn: #dc2626; --line: #e5e7eb; --btn: #111827; --btn-text: #fff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --card: #181b22; --text: #f3f4f6; --muted: #9ca3af;
+      --accent: #22c55e; --warn: #f87171; --line: #2a2f3a; --btn: #f3f4f6; --btn-text: #111827;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    padding: 16px; max-width: 520px; margin-inline: auto;
+  }
+  header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+  h1 { font-size: 1.1rem; margin: 0; }
+  #status { font-size: .85rem; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  #dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+  #dot.on { background: var(--accent); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px; margin-bottom: 12px; }
+  #count {
+    font-size: 8rem; font-weight: 800; text-align: center; line-height: 1;
+    font-variant-numeric: tabular-nums; transition: transform .12s, color .12s;
+  }
+  #count.bump { transform: scale(1.08); color: var(--accent); }
+  .label { text-align: center; color: var(--muted); font-size: .9rem; margin-top: 4px; }
+  .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+  .stat .v { font-size: 1.6rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat .k { color: var(--muted); font-size: .8rem; }
+  #partials.flash { color: var(--warn); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  button {
+    flex: 1; min-width: 90px; padding: 14px 10px; font-size: 1rem; font-weight: 600;
+    border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: var(--text);
+  }
+  button.primary { background: var(--btn); color: var(--btn-text); border-color: var(--btn); }
+  button:disabled { opacity: .4; }
+  label.toggle { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: .9rem; margin-top: 12px; }
+  #log {
+    font-family: ui-monospace, monospace; font-size: .75rem; color: var(--muted);
+    max-height: 140px; overflow-y: auto; white-space: pre-wrap; margin: 0;
+  }
+  #unsupported { display: none; color: var(--warn); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Sit-up Counter</h1>
+  <div id="status"><span id="dot"></span><span id="statusText">Disconnected</span></div>
+</header>
+
+<p id="unsupported" class="card">This browser doesn't support Web Bluetooth. Use Chrome on Android or desktop, served over https or localhost.</p>
+
+<div class="card">
+  <div id="count">0</div>
+  <div class="label">reps</div>
+</div>
+
+<div class="card stats">
+  <div class="stat"><div class="v" id="partials">0</div><div class="k">partial reps</div></div>
+  <div class="stat"><div class="v" id="timer">0:00</div><div class="k">set time</div></div>
+  <div class="stat"><div class="v" id="last">–</div><div class="k">last rep (s)</div></div>
+  <div class="stat"><div class="v" id="avg">–</div><div class="k">avg pace (s)</div></div>
+</div>
+
+<div class="card">
+  <div class="row">
+    <button id="connectBtn" class="primary">Connect</button>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <button id="calBtn" disabled>Calibrate</button>
+    <button id="resetBtn" disabled>Reset</button>
+  </div>
+  <label class="toggle"><input type="checkbox" id="speak"> Say each count out loud</label>
+</div>
+
+<div class="card"><pre id="log"></pre></div>
+
+<script>
+const NUS = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+const NUS_RX = '6e400002-b5a3-f393-e0a9-e50e24dcca9e'; // phone -> board
+const NUS_TX = '6e400003-b5a3-f393-e0a9-e50e24dcca9e'; // board -> phone
+
+const $ = id => document.getElementById(id);
+let device, rxChar, buffer = '', wakeLock = null;
+let reps = 0, partials = 0, setStart = null, repTimes = [], timerId = null;
+
+if (!navigator.bluetooth) $('unsupported').style.display = 'block';
+
+function log(msg) {
+  const t = new Date().toLocaleTimeString();
+  $('log').textContent = `${t}  ${msg}\n` + $('log').textContent;
+}
+
+function setConnected(on) {
+  $('dot').classList.toggle('on', on);
+  $('statusText').textContent = on ? 'Connected' : 'Disconnected';
+  $('connectBtn').textContent = on ? 'Disconnect' : 'Connect';
+  $('calBtn').disabled = !on;
+  $('resetBtn').disabled = !on;
+}
+
+function fmtTime(ms) {
+  const s = Math.floor(ms / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+function startTimer() {
+  if (timerId) return;
+  timerId = setInterval(() => {
+    if (setStart) $('timer').textContent = fmtTime(Date.now() - setStart);
+  }, 250);
+}
+
+function resetDisplay() {
+  reps = 0; partials = 0; setStart = null; repTimes = [];
+  $('count').textContent = '0';
+  $('partials').textContent = '0';
+  $('timer').textContent = '0:00';
+  $('last').textContent = '–';
+  $('avg').textContent = '–';
+}
+
+function speak(text) {
+  if (!$('speak').checked || !window.speechSynthesis) return;
+  speechSynthesis.cancel();
+  speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+}
+
+function bump(el) {
+  el.classList.add(el.id === 'count' ? 'bump' : 'flash');
+  setTimeout(() => el.classList.remove('bump', 'flash'), 250);
+}
+
+function handleLine(line) {
+  const parts = line.trim().split(',');
+  if (!parts[0]) return;
+  log(line.trim());
+  switch (parts[0]) {
+    case 'REP': {
+      reps = parseInt(parts[1], 10);
+      const dt = parseInt(parts[2], 10);
+      if (!setStart) { setStart = Date.now(); startTimer(); }
+      if (dt > 0) {
+        repTimes.push(dt);
+        $('last').textContent = (dt / 1000).toFixed(1);
+        const avg = repTimes.reduce((a, b) => a + b, 0) / repTimes.length;
+        $('avg').textContent = (avg / 1000).toFixed(1);
+      }
+      $('count').textContent = reps;
+      bump($('count'));
+      speak(String(reps));
+      if (navigator.vibrate) navigator.vibrate(60);
+      break;
+    }
+    case 'PARTIAL':
+      partials = parseInt(parts[1], 10);
+      $('partials').textContent = partials;
+      bump($('partials'));
+      break;
+    case 'RESET':
+      resetDisplay();
+      break;
+    case 'STATUS':
+      reps = parseInt(parts[1], 10);
+      partials = parseInt(parts[2], 10);
+      $('count').textContent = reps;
+      $('partials').textContent = partials;
+      break;
+  }
+}
+
+function onNotify(e) {
+  buffer += new TextDecoder().decode(e.target.value);
+  let i;
+  while ((i = buffer.indexOf('\n')) >= 0) {
+    handleLine(buffer.slice(0, i));
+    buffer = buffer.slice(i + 1);
+  }
+}
+
+async function send(cmd) {
+  if (!rxChar) return;
+  const data = new TextEncoder().encode(cmd);
+  try {
+    if (rxChar.writeValueWithoutResponse) await rxChar.writeValueWithoutResponse(data);
+    else await rxChar.writeValue(data);
+  } catch (err) { log('Send failed: ' + err.message); }
+}
+
+async function keepAwake() {
+  try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); }
+  catch (_) { /* not critical */ }
+}
+
+async function connect() {
+  try {
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ services: [NUS] }, { name: 'SitupCounter' }],
+      optionalServices: [NUS]
+    });
+    device.addEventListener('gattserverdisconnected', () => {
+      setConnected(false); rxChar = null; log('Disconnected');
+    });
+    const server = await device.gatt.connect();
+    const svc = await server.getPrimaryService(NUS);
+    rxChar = await svc.getCharacteristic(NUS_RX);
+    const txChar = await svc.getCharacteristic(NUS_TX);
+    await txChar.startNotifications();
+    txChar.addEventListener('characteristicvaluechanged', onNotify);
+    setConnected(true);
+    log('Connected to ' + (device.name || 'device'));
+    keepAwake();
+    send('s'); // sync current count
+  } catch (err) {
+    log('Connect failed: ' + err.message);
+  }
+}
+
+$('connectBtn').onclick = () => {
+  if (device && device.gatt.connected) device.gatt.disconnect();
+  else connect();
+};
+$('calBtn').onclick = () => send('c');
+$('resetBtn').onclick = () => send('r');
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && device && device.gatt.connected) keepAwake();
+});
+</script>
+</body>
+</html>
