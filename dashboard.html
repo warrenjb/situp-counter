@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sit-up Dashboard</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f6f7f9; --surface-1: #ffffff; --text-primary: #16181d;
+    --text-secondary: #52514e; --muted: #6b7280; --line: #e5e7eb; --grid: #eef0f3;
+    --series-1: #2a78d6; --series-2: #eb6834; --critical: #dc2626; --good: #16a34a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --bg: #0f1115; --surface-1: #181b22; --text-primary: #f0efec;
+      --text-secondary: #c3c2b7; --muted: #9ca3af; --line: #2a2f3a; --grid: #232833;
+      --series-1: #3987e5; --series-2: #d95926; --critical: #f87171; --good: #22c55e;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0f1115; --surface-1: #181b22; --text-primary: #f0efec;
+    --text-secondary: #c3c2b7; --muted: #9ca3af; --line: #2a2f3a; --grid: #232833;
+    --series-1: #3987e5; --series-2: #d95926; --critical: #f87171; --good: #22c55e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text-primary);
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    padding: 16px; max-width: 960px; margin-inline: auto;
+  }
+  header { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+  h1 { font-size: 1.2rem; margin: 0; }
+  h2 { font-size: .95rem; margin: 0 0 4px; font-weight: 650; }
+  .sub { color: var(--muted); font-size: .8rem; margin: 0 0 12px; }
+  header nav { display: flex; align-items: center; gap: 12px; font-size: .85rem; }
+  header a { color: var(--muted); }
+  .card { background: var(--surface-1); border: 1px solid var(--line); border-radius: 16px; padding: 16px; margin-bottom: 12px; }
+  button {
+    padding: 8px 12px; font-size: .9rem; font-weight: 600; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--surface-1); color: var(--text-primary); cursor: pointer;
+  }
+  button.solid { background: var(--text-primary); color: var(--surface-1); border-color: var(--text-primary); }
+
+  .filters { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+  .filters button[aria-pressed="true"] { background: var(--text-primary); color: var(--surface-1); border-color: var(--text-primary); }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 12px; }
+  .tile { background: var(--surface-1); border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px; }
+  .tile .k { color: var(--text-secondary); font-size: .8rem; }
+  .tile .v { font-size: 1.9rem; font-weight: 800; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .tile .n { color: var(--muted); font-size: .75rem; margin-top: 2px; }
+
+  .grid2 { display: grid; grid-template-columns: 1fr; gap: 12px; }
+  @media (min-width: 760px) { .grid2 { grid-template-columns: 1fr 1fr; } }
+  .grid2 .card { margin-bottom: 0; }
+  .chart-box { position: relative; height: 240px; }
+  .row-between { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; flex-wrap: wrap; }
+  select {
+    padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--surface-1); color: var(--text-primary); font-size: .85rem; max-width: 100%;
+  }
+  #tempoNote { font-size: .85rem; color: var(--text-secondary); min-height: 1.2em; margin-top: 8px; }
+
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: .9rem; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 8px 6px; border-top: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--text-secondary); font-weight: 600; font-size: .8rem; border-top: 0; }
+  td.num, th.num { text-align: right; }
+  td .del { padding: 4px 8px; font-size: .75rem; font-weight: 500; color: var(--muted); }
+
+  .signin { max-width: 380px; margin: 40px auto; }
+  .signin form { display: grid; gap: 8px; }
+  .signin input {
+    width: 100%; padding: 12px; font-size: 1rem; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--text-primary);
+  }
+  .signin button { padding: 12px; font-size: 1rem; }
+  #msg { font-size: .85rem; color: var(--muted); min-height: 1.2em; }
+  #msg.bad { color: var(--critical); }
+  .empty { color: var(--muted); text-align: center; padding: 40px 0; }
+  #app { display: none; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.js"></script>
+</head>
+<body>
+<header>
+  <h1>Sit-up Dashboard</h1>
+  <nav>
+    <a href="index.html">Home</a>
+    <a href="situp_counter.html">Counter</a>
+    <span id="who" style="color:var(--muted)"></span>
+    <button id="signOutBtn" style="display:none">Sign out</button>
+  </nav>
+</header>
+
+<div id="signinCard" class="card signin" style="display:none">
+  <h2>Sign in</h2>
+  <p class="sub">Same account you use on the counter page.</p>
+  <form id="signinForm">
+    <input type="email" id="email" placeholder="Email" autocomplete="username" required>
+    <input type="password" id="password" placeholder="Password" autocomplete="current-password" required>
+    <button type="submit" class="solid">Sign in</button>
+  </form>
+  <div id="msg"></div>
+</div>
+
+<main id="app">
+  <div class="filters" role="group" aria-label="Date range">
+    <button data-days="7">7 days</button>
+    <button data-days="30" aria-pressed="true">30 days</button>
+    <button data-days="90">90 days</button>
+    <button data-days="0">All time</button>
+  </div>
+
+  <div class="tiles">
+    <div class="tile"><div class="k">Total reps</div><div class="v" id="tReps">–</div><div class="n" id="tRepsN"></div></div>
+    <div class="tile"><div class="k">Sets</div><div class="v" id="tSets">–</div><div class="n" id="tSetsN"></div></div>
+    <div class="tile"><div class="k">Best set (all time)</div><div class="v" id="tBest">–</div><div class="n" id="tBestN"></div></div>
+    <div class="tile"><div class="k">Streak</div><div class="v" id="tStreak">–</div><div class="n" id="tStreakN"></div></div>
+    <div class="tile"><div class="k">Avg pace</div><div class="v" id="tPace">–</div><div class="n" id="tPaceN"></div></div>
+  </div>
+
+  <div id="empty" class="card empty" style="display:none">No sets yet. Finish a set on the counter page and it will show up here.</div>
+
+  <div id="charts">
+    <div class="card">
+      <h2>Reps per day</h2>
+      <p class="sub">All sets added together</p>
+      <div class="chart-box"><canvas id="dailyChart" aria-label="Reps per day bar chart"></canvas></div>
+    </div>
+
+    <div class="grid2" style="margin-bottom:12px">
+      <div class="card">
+        <h2>Best set per day</h2>
+        <p class="sub">Most reps in a single set</p>
+        <div class="chart-box"><canvas id="bestChart" aria-label="Best set per day line chart"></canvas></div>
+      </div>
+      <div class="card">
+        <h2>Pace per day</h2>
+        <p class="sub">Average seconds per rep; lower is faster</p>
+        <div class="chart-box"><canvas id="paceChart" aria-label="Average pace per day line chart"></canvas></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row-between">
+        <div>
+          <h2>Rep tempo within a set</h2>
+          <p class="sub">Seconds between reps; a rising line means you slowed down</p>
+        </div>
+        <select id="setPick" aria-label="Choose a set"></select>
+      </div>
+      <div class="chart-box"><canvas id="tempoChart" aria-label="Seconds between reps line chart"></canvas></div>
+      <div id="tempoNote"></div>
+    </div>
+
+    <div class="card">
+      <h2>Recent sets</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>When</th><th class="num">Reps</th><th class="num">Partial</th>
+            <th class="num">Time</th><th class="num">Pace (s/rep)</th><th></th>
+          </tr></thead>
+          <tbody id="setRows"></tbody>
+        </table>
+      </div>
+      <button id="moreBtn" style="margin-top:10px;width:100%;display:none">Show all</button>
+    </div>
+  </div>
+</main>
+
+<script>
+const SUPABASE_URL = 'https://jhunufgtetzqkswtstdv.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_iWbHvHXWYXeVqFmxJNu_vw_zvvmYj_J'; // publishable: safe in a page
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const $ = id => document.getElementById(id);
+let allSets = [];            // newest first
+let rangeDays = 30;
+const charts = {};
+
+// ---------- helpers ----------
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const dayKey = d => {
+  const x = new Date(d);
+  return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+};
+const fmtDay = key => {
+  const [y, m, d] = key.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+};
+const fmtDur = ms => { const s = Math.round(ms / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+const fmtWhen = iso => new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+const mean = a => a.reduce((s, v) => s + v, 0) / a.length;
+
+function inRange(sets) {
+  if (!rangeDays) return sets;
+  const start = new Date(); start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - (rangeDays - 1));
+  return sets.filter(s => new Date(s.started_at) >= start);
+}
+
+function dayList(sets) {
+  // Every calendar day in the range, oldest first, so empty days show as gaps.
+  let start;
+  if (rangeDays) {
+    start = new Date(); start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() - (rangeDays - 1));
+  } else {
+    if (!sets.length) return [];
+    start = new Date(sets[sets.length - 1].started_at); start.setHours(0, 0, 0, 0);
+  }
+  const days = [], end = new Date(); end.setHours(0, 0, 0, 0);
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) days.push(dayKey(d));
+  return days;
+}
+
+// ---------- tiles ----------
+function renderTiles(sets) {
+  const reps = sets.reduce((s, x) => s + x.reps, 0);
+  const label = rangeDays ? `last ${rangeDays} days` : 'all time';
+  $('tReps').textContent = reps.toLocaleString();
+  $('tRepsN').textContent = label;
+  $('tSets').textContent = sets.length;
+  $('tSetsN').textContent = sets.length ? `${(reps / sets.length).toFixed(1)} reps per set` : label;
+
+  const best = allSets.reduce((b, s) => (!b || s.reps > b.reps ? s : b), null);
+  $('tBest').textContent = best ? best.reps : '–';
+  $('tBestN').textContent = best ? fmtWhen(best.started_at) : '';
+
+  // Streak: consecutive days with a set, ending today (or yesterday if nothing yet today).
+  const days = new Set(allSets.map(s => dayKey(s.started_at)));
+  const d = new Date(); d.setHours(0, 0, 0, 0);
+  if (!days.has(dayKey(d))) d.setDate(d.getDate() - 1);
+  let streak = 0;
+  while (days.has(dayKey(d))) { streak++; d.setDate(d.getDate() - 1); }
+  $('tStreak').textContent = streak;
+  $('tStreakN').textContent = streak === 1 ? 'day' : 'days in a row';
+
+  const paced = sets.filter(s => s.avg_pace_s);
+  if (paced.length) {
+    // Weight by reps so long sets count more than short ones.
+    const w = paced.reduce((s, x) => s + x.reps, 0);
+    const pace = paced.reduce((s, x) => s + Number(x.avg_pace_s) * x.reps, 0) / w;
+    $('tPace').textContent = pace.toFixed(1) + 's';
+    $('tPaceN').textContent = 'per rep, ' + label;
+  } else {
+    $('tPace').textContent = '–';
+    $('tPaceN').textContent = '';
+  }
+}
+
+// ---------- charts ----------
+function baseOptions(yTitle, opts = {}) {
+  const ink2 = css('--text-secondary'), grid = css('--grid');
+  return {
+    responsive: true, maintainAspectRatio: false, animation: false,
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        backgroundColor: css('--surface-1'), titleColor: css('--text-primary'),
+        bodyColor: css('--text-primary'), borderColor: css('--line'), borderWidth: 1,
+        padding: 10, displayColors: false,
+        callbacks: opts.tooltip || {}
+      }
+    },
+    scales: {
+      x: { grid: { display: false }, border: { color: css('--line') },
+           ticks: { color: ink2, maxRotation: 0, autoSkip: true, maxTicksLimit: 8 } },
+      y: { beginAtZero: opts.beginAtZero !== false, grid: { color: grid }, border: { display: false },
+           ticks: { color: ink2, precision: 0, maxTicksLimit: 6 },
+           title: { display: !!yTitle, text: yTitle, color: ink2 } }
+    }
+  };
+}
+
+function draw(id, config) {
+  if (charts[id]) charts[id].destroy();
+  charts[id] = new Chart($(id), config);
+}
+
+function renderDaily(sets) {
+  const days = dayList(sets);
+  const byDay = {}, setsByDay = {}, bestByDay = {}, paceByDay = {};
+  for (const s of sets) {
+    const k = dayKey(s.started_at);
+    byDay[k] = (byDay[k] || 0) + s.reps;
+    setsByDay[k] = (setsByDay[k] || 0) + 1;
+    bestByDay[k] = Math.max(bestByDay[k] || 0, s.reps);
+    if (s.avg_pace_s) (paceByDay[k] = paceByDay[k] || []).push([Number(s.avg_pace_s), s.reps]);
+  }
+  const labels = days.map(fmtDay);
+  const blue = css('--series-1');
+
+  draw('dailyChart', {
+    type: 'bar',
+    data: { labels, datasets: [{
+      data: days.map(k => byDay[k] || 0), backgroundColor: blue,
+      borderRadius: { topLeft: 4, topRight: 4 }, borderSkipped: 'start',
+      maxBarThickness: 28, categoryPercentage: .85, barPercentage: .9
+    }] },
+    options: baseOptions('reps', { tooltip: {
+      label: c => `${c.parsed.y} reps` + (setsByDay[days[c.dataIndex]] ? ` in ${setsByDay[days[c.dataIndex]]} set(s)` : '')
+    } })
+  });
+
+  // Line charts only plot days that have sets; spanGaps joins across rest days.
+  const line = (vals) => ({
+    data: vals, borderColor: blue, backgroundColor: blue, borderWidth: 2,
+    pointRadius: 4, pointHoverRadius: 6, pointBorderColor: css('--surface-1'), pointBorderWidth: 2,
+    spanGaps: true, tension: 0
+  });
+
+  draw('bestChart', {
+    type: 'line',
+    data: { labels, datasets: [line(days.map(k => bestByDay[k] ?? null))] },
+    options: baseOptions('reps', { tooltip: { label: c => `Best set: ${c.parsed.y} reps` } })
+  });
+
+  draw('paceChart', {
+    type: 'line',
+    data: { labels, datasets: [line(days.map(k => {
+      const p = paceByDay[k]; if (!p) return null;
+      const w = p.reduce((s, x) => s + x[1], 0);
+      return +(p.reduce((s, x) => s + x[0] * x[1], 0) / w).toFixed(2);
+    }))] },
+    options: Object.assign(baseOptions('s / rep', {
+      beginAtZero: true, tooltip: { label: c => `${c.parsed.y.toFixed(1)} s per rep` }
+    }))
+  });
+}
+
+function fillSetPicker() {
+  const sel = $('setPick');
+  const keep = sel.value;
+  sel.innerHTML = '';
+  allSets.filter(s => s.rep_times_ms && s.rep_times_ms.length >= 2).slice(0, 50).forEach(s => {
+    const o = document.createElement('option');
+    o.value = s.id;
+    o.textContent = `${fmtWhen(s.started_at)} · ${s.reps} reps`;
+    sel.appendChild(o);
+  });
+  if (keep && [...sel.options].some(o => o.value === keep)) sel.value = keep;
+  renderTempo();
+}
+
+function renderTempo() {
+  const s = allSets.find(x => String(x.id) === $('setPick').value);
+  if (!s) {
+    if (charts.tempoChart) { charts.tempoChart.destroy(); delete charts.tempoChart; }
+    $('tempoNote').textContent = 'Needs a set with at least 3 reps.';
+    return;
+  }
+  const secs = s.rep_times_ms.map(ms => ms / 1000);
+  // rep_times_ms[i] is the gap before rep i+2 (the first rep has no gap).
+  const labels = secs.map((_, i) => `Rep ${i + 2}`);
+  const blue = css('--series-1');
+  draw('tempoChart', {
+    type: 'line',
+    data: { labels, datasets: [{
+      data: secs, borderColor: blue, backgroundColor: blue, borderWidth: 2,
+      pointRadius: 3, pointHoverRadius: 6, pointBorderColor: css('--surface-1'), pointBorderWidth: 2, tension: 0
+    }] },
+    options: baseOptions('seconds', { tooltip: { label: c => `${c.parsed.y.toFixed(1)} s since previous rep` } })
+  });
+
+  if (secs.length >= 6) {
+    const third = Math.floor(secs.length / 3);
+    const first = mean(secs.slice(0, third)), last = mean(secs.slice(-third));
+    const change = (last - first) / first * 100;
+    $('tempoNote').textContent = Math.abs(change) < 5
+      ? `Steady pace: about ${mean(secs).toFixed(1)} s per rep from start to finish.`
+      : change > 0
+        ? `Slowed down ${change.toFixed(0)}% by the end (${first.toFixed(1)} s → ${last.toFixed(1)} s per rep).`
+        : `Sped up ${(-change).toFixed(0)}% by the end (${first.toFixed(1)} s → ${last.toFixed(1)} s per rep).`;
+  } else {
+    $('tempoNote').textContent = `Average ${mean(secs).toFixed(1)} s between reps.`;
+  }
+}
+
+let showAllRows = false;
+function renderTable(sets) {
+  const body = $('setRows');
+  body.innerHTML = '';
+  const limit = showAllRows ? 500 : 15;
+  $('moreBtn').style.display = sets.length > 15 ? '' : 'none';
+  $('moreBtn').textContent = showAllRows ? 'Show fewer' : `Show all ${Math.min(sets.length, 500)}`;
+  sets.slice(0, limit).forEach(s => {
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      `<td>${fmtWhen(s.started_at)}</td><td class="num"><b>${s.reps}</b></td>` +
+      `<td class="num">${s.partials || 0}</td><td class="num">${fmtDur(s.duration_ms)}</td>` +
+      `<td class="num">${s.avg_pace_s ? Number(s.avg_pace_s).toFixed(1) : '–'}</td>` +
+      `<td class="num"><button class="del" data-id="${s.id}">Delete</button></td>`;
+    body.appendChild(tr);
+  });
+}
+
+$('setRows').addEventListener('click', async e => {
+  const btn = e.target.closest('.del');
+  if (!btn) return;
+  const s = allSets.find(x => String(x.id) === btn.dataset.id);
+  if (!s || !confirm(`Delete the ${s.reps}-rep set from ${fmtWhen(s.started_at)}?`)) return;
+  const { error } = await sb.from('situp_sets').delete().eq('id', s.id);
+  if (error) { alert('Could not delete: ' + error.message); return; }
+  allSets = allSets.filter(x => x !== s);
+  renderAll();
+});
+
+function renderAll() {
+  const sets = inRange(allSets);
+  renderTiles(sets);
+  const none = allSets.length === 0;
+  $('empty').style.display = none ? 'block' : 'none';
+  $('charts').style.display = none ? 'none' : 'block';
+  if (none) return;
+  renderDaily(sets);
+  fillSetPicker();
+  renderTable(sets);
+}
+
+// ---------- data ----------
+async function loadSets() {
+  const { data, error } = await sb.from('situp_sets')
+    .select('id, started_at, duration_ms, reps, partials, avg_pace_s, rep_times_ms')
+    .order('started_at', { ascending: false })
+    .limit(5000);
+  if (error) { $('empty').textContent = 'Could not load sets: ' + error.message; $('empty').style.display = 'block'; return; }
+  allSets = data || [];
+  renderAll();
+}
+
+// ---------- filters & theme ----------
+document.querySelectorAll('.filters button').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('.filters button').forEach(x => x.setAttribute('aria-pressed', 'false'));
+  b.setAttribute('aria-pressed', 'true');
+  rangeDays = Number(b.dataset.days);
+  renderAll();
+}));
+$('setPick').addEventListener('change', renderTempo);
+$('moreBtn').addEventListener('click', () => { showAllRows = !showAllRows; renderTable(inRange(allSets)); });
+if (window.matchMedia) {
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => allSets.length && renderAll());
+}
+
+// ---------- auth ----------
+function showSignedIn(user) {
+  $('signinCard').style.display = user ? 'none' : 'block';
+  $('app').style.display = user ? 'block' : 'none';
+  $('signOutBtn').style.display = user ? '' : 'none';
+  $('who').textContent = user ? user.email : '';
+}
+
+let loadedFor = null;
+sb.auth.onAuthStateChange((_event, session) => {
+  const user = session ? session.user : null;
+  showSignedIn(user);
+  if (user && loadedFor !== user.id) { loadedFor = user.id; loadSets(); }
+  if (!user) { loadedFor = null; allSets = []; }
+});
+
+$('signinForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  $('msg').textContent = 'Signing in…'; $('msg').className = '';
+  const { error } = await sb.auth.signInWithPassword({ email: $('email').value.trim(), password: $('password').value });
+  if (error) { $('msg').textContent = error.message; $('msg').className = 'bad'; }
+  else { $('msg').textContent = ''; $('password').value = ''; }
+});
+$('signOutBtn').onclick = () => sb.auth.signOut();
+
+// Refresh when you come back to the tab (e.g. after finishing a set on the counter).
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && loadedFor) loadSets();
+});
+</script>
+</body>
+</html>

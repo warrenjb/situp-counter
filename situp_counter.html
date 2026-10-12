@@ -1,0 +1,739 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sit-up Counter</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #16181d; --muted: #6b7280;
+    --accent: #16a34a; --warn: #dc2626; --mid: #d97706; --line: #e5e7eb;
+    --track: #eef0f3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --card: #181b22; --text: #f3f4f6; --muted: #9ca3af;
+      --accent: #22c55e; --warn: #f87171; --mid: #fbbf24; --line: #2a2f3a;
+      --track: #232833;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    padding: 16px; max-width: 520px; margin-inline: auto;
+  }
+  header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+  h1 { font-size: 1.1rem; margin: 0; }
+  h2 { font-size: .9rem; margin: 0 0 8px; color: var(--muted); font-weight: 600; }
+  #status { font-size: .85rem; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  #dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+  #dot.on { background: var(--accent); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px; margin-bottom: 12px; }
+  #count {
+    font-size: 8rem; font-weight: 800; text-align: center; line-height: 1;
+    font-variant-numeric: tabular-nums; transition: transform .12s, color .12s;
+  }
+  #count.bump { transform: scale(1.08); color: var(--accent); }
+  #count.idle { color: var(--muted); }
+  #phase { text-align: center; color: var(--muted); font-size: .95rem; margin-top: 8px; min-height: 1.3em; }
+  #phase.go { color: var(--accent); font-weight: 700; }
+  .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+  .stat .v { font-size: 1.6rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat .k { color: var(--muted); font-size: .8rem; }
+  #partials.flash { color: var(--warn); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  button {
+    flex: 1; min-width: 90px; padding: 14px 10px; font-size: 1rem; font-weight: 600;
+    border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: var(--text);
+  }
+  #startBtn { width: 100%; padding: 20px 10px; font-size: 1.3rem; background: var(--accent); color: #fff; border-color: var(--accent); }
+  #startBtn.stop { background: var(--warn); border-color: var(--warn); }
+  button.solid { background: var(--text); color: var(--bg); border-color: var(--text); }
+  button:disabled { opacity: .4; }
+  label.toggle { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: .9rem; margin-top: 12px; }
+  #sets { list-style: none; margin: 0; padding: 0; }
+  #sets li { display: flex; justify-content: space-between; gap: 8px; padding: 8px 0; border-top: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+  #sets li:first-child { border-top: 0; }
+  #sets .n { font-weight: 700; }
+  #sets .d { color: var(--muted); font-size: .9rem; white-space: nowrap; }
+  #setsCard { display: none; }
+  details > summary { cursor: pointer; font-weight: 600; list-style: none; display: flex; justify-content: space-between; }
+  details > summary::after { content: "▾"; color: var(--muted); }
+  details[open] > summary::after { content: "▴"; }
+  details.small > summary { font-weight: 400; color: var(--muted); font-size: .85rem; }
+  #log {
+    font-family: ui-monospace, monospace; font-size: .75rem; color: var(--muted);
+    max-height: 140px; overflow-y: auto; white-space: pre-wrap; margin: 8px 0 0;
+  }
+  #unsupported { display: none; color: var(--warn); }
+
+  /* Tune panel */
+  .tune-body { margin-top: 14px; }
+  .angle-read { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; }
+  #angleNow { font-size: 2rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .hint { color: var(--muted); font-size: .85rem; }
+  .gauge { position: relative; height: 28px; background: var(--track); border-radius: 8px; overflow: hidden; }
+  #gaugeFill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--accent); opacity: .35; transition: width .1s linear; }
+  .mark { position: absolute; top: 0; bottom: 0; width: 3px; margin-left: -1px; }
+  #mUp { background: var(--accent); }
+  #mPartial { background: var(--mid); }
+  #mDown { background: var(--muted); }
+  #mPeak { background: var(--text); width: 2px; opacity: .5; display: none; }
+  .scale { display: flex; justify-content: space-between; color: var(--muted); font-size: .7rem; margin-top: 4px; }
+  .slider { margin-top: 14px; }
+  .slider .top { display: flex; justify-content: space-between; font-size: .9rem; }
+  .slider .top b { font-variant-numeric: tabular-nums; }
+  .slider input { width: 100%; margin-top: 6px; }
+  .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+  #tuneMsg { margin-top: 12px; font-size: .9rem; min-height: 1.3em; }
+  #tuneMsg.ok { color: var(--accent); }
+  #tuneMsg.bad { color: var(--warn); }
+
+  /* Account / sync */
+  header a { color: var(--muted); font-size: .85rem; margin-right: 12px; }
+  .acct-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: .9rem; }
+  .acct-row .who { color: var(--muted); }
+  .acct-form { display: grid; gap: 8px; }
+  .acct-form input {
+    width: 100%; padding: 12px; font-size: 1rem; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--text);
+  }
+  #acctMsg { font-size: .85rem; min-height: 1.2em; color: var(--muted); }
+  #acctMsg.bad { color: var(--warn); }
+  .sync { font-size: .75rem; color: var(--muted); }
+  .sync.ok { color: var(--accent); }
+  .sync.bad { color: var(--warn); }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<header>
+  <h1>Sit-up Counter</h1>
+  <div style="display:flex;align-items:center"><a href="index.html">Home</a><a href="dashboard.html">Dashboard</a>
+  <div id="status"><span id="dot"></span><span id="statusText">Disconnected</span></div></div>
+</header>
+
+<p id="unsupported" class="card">This browser doesn't support Web Bluetooth. Use Chrome on Android or desktop, served over https or localhost.</p>
+
+<div class="card">
+  <div id="count" class="idle">0</div>
+  <div id="phase">Connect to get started</div>
+</div>
+
+<div class="card stats">
+  <div class="stat"><div class="v" id="partials">0</div><div class="k">partial reps</div></div>
+  <div class="stat"><div class="v" id="timer">0:00</div><div class="k">set time</div></div>
+  <div class="stat"><div class="v" id="last">–</div><div class="k">last rep (s)</div></div>
+  <div class="stat"><div class="v" id="avg">–</div><div class="k">avg pace (s)</div></div>
+</div>
+
+<div class="card">
+  <button id="startBtn" disabled>Start set</button>
+  <div class="row" style="margin-top:8px">
+    <button id="connectBtn">Connect</button>
+  </div>
+  <label class="toggle"><input type="checkbox" id="speak"> Say each count out loud</label>
+</div>
+
+<div class="card" id="acctCard">
+  <div id="acctIn" class="acct-row" style="display:none">
+    <span class="who">Saving sets as <b id="acctEmail"></b></span>
+    <button id="signOutBtn" style="flex:0;padding:8px 12px;font-size:.85rem">Sign out</button>
+  </div>
+  <form id="acctOut" class="acct-form">
+    <h2 style="margin:0">Sign in to save your sets</h2>
+    <input type="email" id="email" placeholder="Email" autocomplete="username" required>
+    <input type="password" id="password" placeholder="Password" autocomplete="current-password" required>
+    <button type="submit" class="solid">Sign in</button>
+  </form>
+  <div id="acctMsg"></div>
+</div>
+
+<div class="card" id="setsCard">
+  <h2>Sets this session</h2>
+  <ul id="sets"></ul>
+</div>
+
+<div class="card">
+  <details id="tune">
+    <summary>Tune rep detection</summary>
+    <div class="tune-body">
+      <div class="angle-read">
+        <span id="angleNow">–</span>
+        <span class="hint" id="angleHint">Live torso angle</span>
+      </div>
+      <div class="gauge">
+        <div id="gaugeFill"></div>
+        <div class="mark" id="mDown"></div>
+        <div class="mark" id="mPartial"></div>
+        <div class="mark" id="mUp"></div>
+        <div class="mark" id="mPeak"></div>
+      </div>
+      <div class="scale"><span>0°</span><span>30°</span><span>60°</span><span>90°</span><span>120°</span></div>
+
+      <div class="row" style="margin-top:14px">
+        <button id="autoBtn" class="solid">Auto-tune</button>
+        <button id="doneBtn" style="display:none">Finish now</button>
+      </div>
+
+      <div class="slider">
+        <div class="top"><span><span class="sw" style="background:var(--accent)"></span>Up (counts the rep)</span><b id="upV">55°</b></div>
+        <input type="range" id="upR" min="20" max="120" step="1" value="55">
+      </div>
+      <div class="slider">
+        <div class="top"><span><span class="sw" style="background:var(--mid)"></span>Partial rep</span><b id="partialV">35°</b></div>
+        <input type="range" id="partialR" min="10" max="110" step="1" value="35">
+      </div>
+      <div class="slider">
+        <div class="top"><span><span class="sw" style="background:var(--muted)"></span>Down (finishes the rep)</span><b id="downV">20°</b></div>
+        <input type="range" id="downR" min="5" max="60" step="1" value="20">
+      </div>
+
+      <div class="row" style="margin-top:14px">
+        <button id="saveBtn" class="solid" disabled>Save to board</button>
+      </div>
+      <div id="tuneMsg"></div>
+    </div>
+  </details>
+</div>
+
+<div class="card">
+  <details class="small"><summary>Device log</summary><pre id="log"></pre></details>
+</div>
+
+<script>
+const NUS = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+const NUS_RX = '6e400002-b5a3-f393-e0a9-e50e24dcca9e'; // phone -> board
+const NUS_TX = '6e400003-b5a3-f393-e0a9-e50e24dcca9e'; // board -> phone
+const GAUGE_MAX = 120;
+
+const $ = id => document.getElementById(id);
+let device, rxChar, buffer = '';
+let running = false, starting = false, startTimeout = null;
+let reps = 0, partials = 0, setStart = null, repTimes = [];
+const completedSets = [];
+let boardCfg = null;          // thresholds currently saved on the board
+let tuning = null;            // auto-tune state
+
+if (!navigator.bluetooth) $('unsupported').style.display = 'block';
+
+// ---------- UI helpers ----------
+function log(msg) {
+  const t = new Date().toLocaleTimeString();
+  $('log').textContent = `${t}  ${msg}\n` + $('log').textContent;
+}
+
+function connected() { return !!(device && device.gatt.connected); }
+
+function setPhase(text, go = false) {
+  $('phase').textContent = text;
+  $('phase').classList.toggle('go', go);
+}
+
+function refreshButtons() {
+  const btn = $('startBtn');
+  btn.disabled = !connected() || starting || !!tuning;
+  btn.textContent = starting ? 'Calibrating…' : running ? 'Stop set' : 'Start set';
+  btn.classList.toggle('stop', running);
+  $('connectBtn').textContent = connected() ? 'Disconnect' : 'Connect';
+  $('dot').classList.toggle('on', connected());
+  $('statusText').textContent = connected() ? 'Connected' : 'Disconnected';
+  $('count').classList.toggle('idle', !running);
+  $('autoBtn').disabled = !connected() || running;
+  $('autoBtn').textContent = tuning ? 'Cancel' : 'Auto-tune';
+  $('doneBtn').style.display = tuning && tuning.phase === 'capturing' ? '' : 'none';
+  refreshSave();
+}
+
+function fmtTime(ms) {
+  const s = Math.floor(ms / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+function avgPace() {
+  if (!repTimes.length) return null;
+  return repTimes.reduce((a, b) => a + b, 0) / repTimes.length / 1000;
+}
+
+function resetDisplay() {
+  reps = 0; partials = 0; repTimes = [];
+  $('count').textContent = '0';
+  $('partials').textContent = '0';
+  $('timer').textContent = '0:00';
+  $('last').textContent = '–';
+  $('avg').textContent = '–';
+}
+
+function speak(text) {
+  if (!$('speak').checked || !window.speechSynthesis) return;
+  speechSynthesis.cancel();
+  speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+}
+
+function bump(el) {
+  el.classList.add(el.id === 'count' ? 'bump' : 'flash');
+  setTimeout(() => el.classList.remove('bump', 'flash'), 250);
+}
+
+setInterval(() => {
+  if (running && setStart) $('timer').textContent = fmtTime(Date.now() - setStart);
+}, 250);
+
+function addSet(r, p, ms) {
+  const pace = avgPace();
+  const ended = new Date();
+  const row = {
+    client_id: (crypto.randomUUID ? crypto.randomUUID() : fallbackUUID()),
+    started_at: new Date(ended.getTime() - ms).toISOString(),
+    ended_at: ended.toISOString(),
+    duration_ms: ms,
+    reps: r,
+    partials: p,
+    avg_pace_s: pace ? +pace.toFixed(2) : null,
+    rep_times_ms: repTimes.slice(),
+    up_deg: boardCfg ? boardCfg.up : null,
+    down_deg: boardCfg ? boardCfg.down : null,
+    partial_deg: boardCfg ? boardCfg.partial : null
+  };
+  completedSets.push(row);
+  const li = document.createElement('li');
+  li.innerHTML =
+    `<span><span class="n">Set ${completedSets.length}</span> · ${r} reps` +
+    (p ? ` · ${p} partial` : '') +
+    `<br><span class="sync" data-id="${row.client_id}">Saving…</span></span>` +
+    `<span class="d">${fmtTime(ms)}${pace ? ` · ${pace.toFixed(1)} s/rep` : ''}</span>`;
+  $('sets').prepend(li);
+  $('setsCard').style.display = 'block';
+  enqueue(row);
+}
+
+function fallbackUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
+
+// ---------- Supabase: sign-in and saving sets ----------
+const SUPABASE_URL = 'https://jhunufgtetzqkswtstdv.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_iWbHvHXWYXeVqFmxJNu_vw_zvvmYj_J'; // publishable: safe in a page
+const QUEUE_KEY = 'situp_pending_sets';
+const sb = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
+let user = null, flushing = false;
+
+function loadQueue() {
+  try { return JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]'); } catch (_) { return []; }
+}
+function saveQueue(q) {
+  try { localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); } catch (_) { /* in-memory only */ }
+}
+let memQueue = loadQueue();
+
+function markSync(id, text, kind = '') {
+  document.querySelectorAll(`.sync[data-id="${id}"]`).forEach(el => {
+    el.textContent = text;
+    el.className = 'sync ' + kind;
+  });
+}
+
+function enqueue(row) {
+  memQueue.push(row);
+  saveQueue(memQueue);
+  flushQueue();
+}
+
+async function flushQueue() {
+  if (!sb || flushing) return;
+  if (!user) {
+    memQueue.forEach(r => markSync(r.client_id, 'Not saved yet: sign in below', 'bad'));
+    return;
+  }
+  flushing = true;
+  try {
+    while (memQueue.length) {
+      const row = memQueue[0];
+      const { error } = await sb.from('situp_sets').insert(row);
+      if (error && error.code !== '23505') {        // 23505 = already saved
+        markSync(row.client_id, 'Not saved: will retry', 'bad');
+        log('Save failed: ' + error.message);
+        break;
+      }
+      memQueue.shift();
+      saveQueue(memQueue);
+      markSync(row.client_id, 'Saved', 'ok');
+    }
+  } finally {
+    flushing = false;
+  }
+  if (memQueue.length) setTimeout(flushQueue, 30000);
+  else if (/waiting to upload/.test($('acctMsg').textContent)) $('acctMsg').textContent = '';
+}
+
+function showAccount() {
+  $('acctIn').style.display = user ? 'flex' : 'none';
+  $('acctOut').style.display = user ? 'none' : 'grid';
+  $('acctEmail').textContent = user ? user.email : '';
+  if (user && memQueue.length) $('acctMsg').textContent = `${memQueue.length} set(s) waiting to upload…`;
+}
+
+if (sb) {
+  sb.auth.onAuthStateChange((_event, session) => {
+    user = session ? session.user : null;
+    showAccount();
+    if (user) flushQueue();
+  });
+
+  $('acctOut').addEventListener('submit', async e => {
+    e.preventDefault();
+    $('acctMsg').textContent = 'Signing in…';
+    $('acctMsg').className = '';
+    const { error } = await sb.auth.signInWithPassword({
+      email: $('email').value.trim(),
+      password: $('password').value
+    });
+    if (error) {
+      $('acctMsg').textContent = error.message;
+      $('acctMsg').className = 'bad';
+    } else {
+      $('acctMsg').textContent = '';
+      $('password').value = '';
+    }
+  });
+
+  $('signOutBtn').onclick = () => sb.auth.signOut();
+  window.addEventListener('online', flushQueue);
+} else {
+  $('acctMsg').textContent = 'Could not load the Supabase library. Sets are kept on this phone for now.';
+  $('acctMsg').className = 'bad';
+}
+
+// ---------- Tune panel ----------
+const pct = deg => `${Math.max(0, Math.min(deg, GAUGE_MAX)) / GAUGE_MAX * 100}%`;
+
+function sliderVals() {
+  return { up: +$('upR').value, partial: +$('partialR').value, down: +$('downR').value };
+}
+
+function validVals(v) {
+  return v.down >= 5 && v.partial >= v.down + 5 && v.up >= v.partial + 5;
+}
+
+function drawMarks() {
+  const v = sliderVals();
+  $('upV').textContent = v.up + '°';
+  $('partialV').textContent = v.partial + '°';
+  $('downV').textContent = v.down + '°';
+  $('mUp').style.left = pct(v.up);
+  $('mPartial').style.left = pct(v.partial);
+  $('mDown').style.left = pct(v.down);
+}
+
+function setSliders(v) {
+  $('upR').value = v.up; $('partialR').value = v.partial; $('downR').value = v.down;
+  drawMarks();
+}
+
+function tuneMsg(text, kind = '') {
+  $('tuneMsg').textContent = text;
+  $('tuneMsg').className = kind;
+}
+
+function refreshSave() {
+  const v = sliderVals();
+  const changed = !boardCfg || v.up !== boardCfg.up || v.partial !== boardCfg.partial || v.down !== boardCfg.down;
+  $('saveBtn').disabled = !connected() || !changed || !validVals(v);
+}
+
+['upR', 'partialR', 'downR'].forEach(id => $(id).addEventListener('input', () => {
+  drawMarks();
+  const v = sliderVals();
+  if (!validVals(v)) tuneMsg('Keep Down < Partial < Up, at least 5° apart.', 'bad');
+  else if (boardCfg) tuneMsg('Not saved yet.');
+  refreshSave();
+}));
+
+$('saveBtn').onclick = () => {
+  const v = sliderVals();
+  if (!validVals(v)) return;
+  tuneMsg('Saving…');
+  send(`T,${v.up},${v.down},${v.partial}\n`);
+};
+
+$('tune').addEventListener('toggle', () => {
+  if (!connected()) return;
+  send($('tune').open ? 'a' : 'z');
+  if (!$('tune').open && tuning) cancelTune();
+});
+
+function onAngle(a) {
+  $('angleNow').textContent = a.toFixed(0) + '°';
+  $('gaugeFill').style.width = pct(a);
+  if (tuning && tuning.phase === 'capturing') trackTune(a);
+}
+
+// Auto-tune: calibrate, then watch a few full reps and suggest thresholds.
+const TUNE_REPS = 5, ENTER = 25, EXIT = 12;
+
+function startTune() {
+  tuning = { phase: 'calibrating', peaks: [], mins: [], inRep: false, curPeak: 0, curMin: 999 };
+  if (!$('tune').open) $('tune').open = true;  // also starts the angle stream
+  $('mPeak').style.display = 'none';
+  tuneMsg('Lie flat and hold still…');
+  send('a');
+  send('c');
+  refreshButtons();
+}
+
+function cancelTune() {
+  tuning = null;
+  $('mPeak').style.display = 'none';
+  tuneMsg('');
+  refreshButtons();
+}
+
+function trackTune(a) {
+  const t = tuning;
+  if (!t.inRep) {
+    t.curMin = Math.min(t.curMin, a);
+    if (a > ENTER) { t.inRep = true; t.curPeak = a; t.mins.push(t.curMin); }
+  } else {
+    t.curPeak = Math.max(t.curPeak, a);
+    if (a < EXIT) {
+      t.inRep = false;
+      if (t.curPeak > ENTER + 10) {
+        t.peaks.push(t.curPeak);
+        $('mPeak').style.left = pct(t.curPeak);
+        $('mPeak').style.display = 'block';
+        if (navigator.vibrate) navigator.vibrate(40);
+      }
+      t.curMin = a;
+      tuneMsg(`Captured ${t.peaks.length} of ${TUNE_REPS} full sit-ups…`);
+      if (t.peaks.length >= TUNE_REPS) finishTune();
+    }
+  }
+}
+
+const median = arr => {
+  const s = [...arr].sort((a, b) => a - b), m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+
+function finishTune() {
+  const t = tuning;
+  if (!t || t.peaks.length < 2) {
+    tuneMsg('Need at least 2 full sit-ups to suggest values.', 'bad');
+    return;
+  }
+  const top = median(t.peaks), lowestTop = Math.min(...t.peaks);
+  const rest = t.mins.length ? median(t.mins) : 0;
+  let up = Math.round(Math.min(top * 0.75, lowestTop - 5));
+  let down = Math.max(5, Math.round(rest + 12));
+  let partial = Math.round((up + down) / 2);
+  tuning = null;
+  if (up - down < 15) {
+    tuneMsg(`Your range looks small (top ≈ ${top.toFixed(0)}°). Check the board is snug on your chest and try again.`, 'bad');
+    refreshButtons();
+    return;
+  }
+  setSliders({ up, partial, down });
+  tuneMsg(`Top ≈ ${top.toFixed(0)}°, rest ≈ ${rest.toFixed(0)}°. Suggested values set. Tap Save to store them.`, 'ok');
+  refreshButtons();
+}
+
+$('autoBtn').onclick = () => tuning ? cancelTune() : startTune();
+$('doneBtn').onclick = () => finishTune();
+
+// ---------- Messages from the board ----------
+function handleLine(line) {
+  line = line.trim();
+  const parts = line.split(',');
+  if (!parts[0]) return;
+  if (parts[0] !== 'ANG') log(line);
+  switch (parts[0]) {
+    case 'ANG':
+      onAngle(parseFloat(parts[1]));
+      break;
+
+    case 'CALIBRATED':
+      if (tuning && tuning.phase === 'calibrating') {
+        tuning.phase = 'capturing';
+        tuneMsg(`Now do ${TUNE_REPS} slow, full sit-ups.`);
+        speak('Go');
+        refreshButtons();
+      }
+      break;
+
+    case 'CFG':
+      boardCfg = { up: +parts[1], down: +parts[2], partial: +parts[3] };
+      if (!tuning) setSliders(boardCfg);
+      refreshSave();
+      break;
+
+    case 'SAVED':
+      tuneMsg('Saved to the board.', 'ok');
+      break;
+
+    case 'ERR':
+      tuneMsg('Board rejected that: ' + (parts[1] || 'error'), 'bad');
+      break;
+
+    case 'STARTED':
+      clearTimeout(startTimeout);
+      starting = false; running = true;
+      resetDisplay();
+      setStart = Date.now();
+      setPhase('Go!', true);
+      speak('Go');
+      if (navigator.vibrate) navigator.vibrate([80, 60, 80]);
+      refreshButtons();
+      break;
+
+    case 'REP': {
+      reps = parseInt(parts[1], 10);
+      const dt = parseInt(parts[2], 10);
+      if (dt > 0) {
+        repTimes.push(dt);
+        $('last').textContent = (dt / 1000).toFixed(1);
+        $('avg').textContent = avgPace().toFixed(1);
+      }
+      $('count').textContent = reps;
+      bump($('count'));
+      speak(String(reps));
+      if (navigator.vibrate) navigator.vibrate(60);
+      break;
+    }
+
+    case 'PARTIAL':
+      partials = parseInt(parts[1], 10);
+      $('partials').textContent = partials;
+      bump($('partials'));
+      break;
+
+    case 'STOPPED': {
+      const r = parseInt(parts[1], 10), p = parseInt(parts[2], 10), ms = parseInt(parts[3], 10);
+      if (running) {
+        running = false;
+        $('timer').textContent = fmtTime(ms);
+        addSet(r, p, ms);
+        setPhase(`Set complete: ${r} reps`);
+        speak(`Done. ${r} reps`);
+      }
+      refreshButtons();
+      break;
+    }
+
+    case 'RESET':
+      resetDisplay();
+      break;
+
+    case 'STATUS': {
+      // STATUS,reps,partials,angle,armed,setMs
+      reps = parseInt(parts[1], 10);
+      partials = parseInt(parts[2], 10);
+      const armed = parts[4] === '1';
+      const ms = parseInt(parts[5] || '0', 10);
+      $('count').textContent = reps;
+      $('partials').textContent = partials;
+      if (armed) {
+        running = true;
+        setStart = Date.now() - ms;
+        setPhase('Set in progress', true);
+      } else if (!running) {
+        setPhase('Lie down, then tap Start set');
+      }
+      refreshButtons();
+      break;
+    }
+  }
+}
+
+function onNotify(e) {
+  buffer += new TextDecoder().decode(e.target.value);
+  let i;
+  while ((i = buffer.indexOf('\n')) >= 0) {
+    handleLine(buffer.slice(0, i));
+    buffer = buffer.slice(i + 1);
+  }
+}
+
+// Serialize writes so commands sent back-to-back don't collide.
+let writeChain = Promise.resolve();
+function send(cmd) {
+  if (!rxChar) return;
+  const data = new TextEncoder().encode(cmd);
+  const ch = rxChar;
+  writeChain = writeChain.then(async () => {
+    try {
+      if (ch.writeValueWithoutResponse) await ch.writeValueWithoutResponse(data);
+      else await ch.writeValue(data);
+    } catch (err) { log('Send failed: ' + err.message); }
+  });
+}
+
+// ---------- Start / Stop ----------
+$('startBtn').onclick = () => {
+  if (running) { send('x'); return; }
+  starting = true;
+  setPhase('Calibrating… hold still');
+  refreshButtons();
+  send('g');
+  startTimeout = setTimeout(() => {
+    if (starting) {
+      starting = false;
+      setPhase('No response from the board. Try again.');
+      refreshButtons();
+    }
+  }, 5000);
+};
+
+// ---------- Connection ----------
+async function keepAwake() {
+  try { if ('wakeLock' in navigator) await navigator.wakeLock.request('screen'); }
+  catch (_) { /* not critical */ }
+}
+
+async function connect() {
+  try {
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ services: [NUS] }, { name: 'SitupCounter' }],
+      optionalServices: [NUS]
+    });
+    device.addEventListener('gattserverdisconnected', () => {
+      rxChar = null; starting = false;
+      if (tuning) cancelTune();
+      log('Disconnected');
+      if (running) setPhase('Disconnected. The board is still counting; reconnect to sync.');
+      else setPhase('Connect to get started');
+      refreshButtons();
+    });
+    const server = await device.gatt.connect();
+    const svc = await server.getPrimaryService(NUS);
+    rxChar = await svc.getCharacteristic(NUS_RX);
+    const txChar = await svc.getCharacteristic(NUS_TX);
+    await txChar.startNotifications();
+    txChar.addEventListener('characteristicvaluechanged', onNotify);
+    log('Connected to ' + (device.name || 'device'));
+    refreshButtons();
+    keepAwake();
+    send('s');                         // sync count, set state and thresholds
+    send($('tune').open ? 'a' : 'z');
+  } catch (err) {
+    log('Connect failed: ' + err.message);
+  }
+}
+
+$('connectBtn').onclick = () => {
+  if (connected()) device.gatt.disconnect();
+  else connect();
+};
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && connected()) keepAwake();
+});
+
+drawMarks();
+refreshButtons();
+</script>
+</body>
+</html>
