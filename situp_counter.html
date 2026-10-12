@@ -90,6 +90,15 @@
   #tuneMsg.ok { color: var(--accent); }
   #tuneMsg.bad { color: var(--warn); }
 
+  /* Person picker */
+  .who-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; font-size: .95rem; }
+  .who-row span { color: var(--muted); }
+  .who-row select {
+    flex: 1; max-width: 200px; padding: 10px 12px; font-size: 1rem; font-weight: 600; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--card); color: var(--text);
+  }
+  .who-row select:disabled { opacity: .6; }
+
   /* Account / sync */
   header a { color: var(--muted); font-size: .85rem; margin-right: 12px; }
   .acct-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: .9rem; }
@@ -129,6 +138,13 @@
 </div>
 
 <div class="card">
+  <label class="who-row" for="person">
+    <span>Who's working out</span>
+    <select id="person">
+      <option value="Warren">Warren</option>
+      <option value="Other">Other</option>
+    </select>
+  </label>
   <button id="startBtn" disabled>Start set</button>
   <div class="row" style="margin-top:8px">
     <button id="connectBtn">Connect</button>
@@ -240,6 +256,7 @@ function refreshButtons() {
   $('dot').classList.toggle('on', connected());
   $('statusText').textContent = connected() ? 'Connected' : 'Disconnected';
   $('count').classList.toggle('idle', !running);
+  $('person').disabled = running || starting;
   $('autoBtn').disabled = !connected() || running;
   $('autoBtn').textContent = tuning ? 'Cancel' : 'Auto-tune';
   $('doneBtn').style.display = tuning && tuning.phase === 'capturing' ? '' : 'none';
@@ -284,6 +301,7 @@ function addSet(r, p, ms) {
   const pace = avgPace();
   const ended = new Date();
   const row = {
+    person: $('person').value,
     client_id: (crypto.randomUUID ? crypto.randomUUID() : fallbackUUID()),
     started_at: new Date(ended.getTime() - ms).toISOString(),
     ended_at: ended.toISOString(),
@@ -299,7 +317,7 @@ function addSet(r, p, ms) {
   completedSets.push(row);
   const li = document.createElement('li');
   li.innerHTML =
-    `<span><span class="n">Set ${completedSets.length}</span> · ${r} reps` +
+    `<span><span class="n">Set ${completedSets.length}</span> · ${row.person} · ${r} reps` +
     (p ? ` · ${p} partial` : '') +
     `<br><span class="sync" data-id="${row.client_id}">Saving…</span></span>` +
     `<span class="d">${fmtTime(ms)}${pace ? ` · ${pace.toFixed(1)} s/rep` : ''}</span>`;
@@ -730,6 +748,16 @@ $('connectBtn').onclick = () => {
 
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && connected()) keepAwake();
+});
+
+// Remember who was last selected on this phone
+const PERSON_KEY = 'situp_person';
+try {
+  const saved = localStorage.getItem(PERSON_KEY);
+  if (saved && [...$('person').options].some(o => o.value === saved)) $('person').value = saved;
+} catch (_) { /* default to first option */ }
+$('person').addEventListener('change', () => {
+  try { localStorage.setItem(PERSON_KEY, $('person').value); } catch (_) {}
 });
 
 drawMarks();

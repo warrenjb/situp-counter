@@ -82,6 +82,7 @@
   #msg.bad { color: var(--critical); }
   .empty { color: var(--muted); text-align: center; padding: 40px 0; }
   #app { display: none; }
+  body:not(.everyone) .who-col { display: none; }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.js"></script>
@@ -114,6 +115,11 @@
     <button data-days="30" aria-pressed="true">30 days</button>
     <button data-days="90">90 days</button>
     <button data-days="0">All time</button>
+    <select id="personPick" aria-label="Person" style="margin-left:auto">
+      <option value="Warren">Warren</option>
+      <option value="Other">Other</option>
+      <option value="">Everyone</option>
+    </select>
   </div>
 
   <div class="tiles">
@@ -163,7 +169,7 @@
       <div class="table-wrap">
         <table>
           <thead><tr>
-            <th>When</th><th class="num">Reps</th><th class="num">Partial</th>
+            <th>When</th><th class="who-col">Who</th><th class="num">Reps</th><th class="num">Partial</th>
             <th class="num">Time</th><th class="num">Pace (s/rep)</th><th></th>
           </tr></thead>
           <tbody id="setRows"></tbody>
@@ -180,8 +186,22 @@ const SUPABASE_KEY = 'sb_publishable_iWbHvHXWYXeVqFmxJNu_vw_zvvmYj_J'; // publis
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const $ = id => document.getElementById(id);
-let allSets = [];            // newest first
+let rawSets = [];            // everything loaded, newest first
+let allSets = [];            // rawSets filtered to the chosen person
 let rangeDays = 30;
+const PERSON_KEY = 'situp_dash_person';
+try {
+  const saved = localStorage.getItem(PERSON_KEY);
+  if (saved !== null && [...document.getElementById('personPick').options].some(o => o.value === saved)) {
+    document.getElementById('personPick').value = saved;
+  }
+} catch (_) {}
+
+function applyPerson() {
+  const p = document.getElementById('personPick').value;
+  document.body.classList.toggle('everyone', !p);
+  allSets = p ? rawSets.filter(s => (s.person || 'Warren') === p) : rawSets.slice();
+}
 const charts = {};
 
 // ---------- helpers ----------
@@ -394,7 +414,7 @@ function renderTable(sets) {
   sets.slice(0, limit).forEach(s => {
     const tr = document.createElement('tr');
     tr.innerHTML =
-      `<td>${fmtWhen(s.started_at)}</td><td class="num"><b>${s.reps}</b></td>` +
+      `<td>${fmtWhen(s.started_at)}</td><td class="who-col">${s.person || ''}</td><td class="num"><b>${s.reps}</b></td>` +
       `<td class="num">${s.partials || 0}</td><td class="num">${fmtDur(s.duration_ms)}</td>` +
       `<td class="num">${s.avg_pace_s ? Number(s.avg_pace_s).toFixed(1) : '–'}</td>` +
       `<td class="num"><button class="del" data-id="${s.id}">Delete</button></td>`;
@@ -409,7 +429,8 @@ $('setRows').addEventListener('click', async e => {
   if (!s || !confirm(`Delete the ${s.reps}-rep set from ${fmtWhen(s.started_at)}?`)) return;
   const { error } = await sb.from('situp_sets').delete().eq('id', s.id);
   if (error) { alert('Could not delete: ' + error.message); return; }
-  allSets = allSets.filter(x => x !== s);
+  rawSets = rawSets.filter(x => x.id !== s.id);
+  applyPerson();
   renderAll();
 });
 
@@ -428,11 +449,12 @@ function renderAll() {
 // ---------- data ----------
 async function loadSets() {
   const { data, error } = await sb.from('situp_sets')
-    .select('id, started_at, duration_ms, reps, partials, avg_pace_s, rep_times_ms')
+    .select('id, person, started_at, duration_ms, reps, partials, avg_pace_s, rep_times_ms')
     .order('started_at', { ascending: false })
     .limit(5000);
   if (error) { $('empty').textContent = 'Could not load sets: ' + error.message; $('empty').style.display = 'block'; return; }
-  allSets = data || [];
+  rawSets = data || [];
+  applyPerson();
   renderAll();
 }
 
@@ -444,6 +466,11 @@ document.querySelectorAll('.filters button').forEach(b => b.addEventListener('cl
   renderAll();
 }));
 $('setPick').addEventListener('change', renderTempo);
+$('personPick').addEventListener('change', () => {
+  try { localStorage.setItem(PERSON_KEY, $('personPick').value); } catch (_) {}
+  applyPerson();
+  renderAll();
+});
 $('moreBtn').addEventListener('click', () => { showAllRows = !showAllRows; renderTable(inRange(allSets)); });
 if (window.matchMedia) {
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => allSets.length && renderAll());
